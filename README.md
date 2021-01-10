@@ -1,5 +1,6 @@
 ## Multithreading data processing 
 The work was done according to the educational option twelfth task
+
 Discipline: parallel programming
 
 The main task of the work. Data processing from input.json file four different method:
