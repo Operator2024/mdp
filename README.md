@@ -3,6 +3,8 @@ The work was done according to the educational option twelfth task
 
 Discipline: parallel programming
 
+Python ver: 3.5 and higher
+
 The main task of the work. Data processing from input.json file four different method:
 1. [Semaphore](semaphore.py)
 2. [Simulating a semaphore with a petri net](semaphorePetri.py)
