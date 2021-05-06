@@ -1,19 +1,19 @@
 import json
-import multiprocessing
-import os
+from copy import deepcopy
+from multiprocessing import Process, BoundedSemaphore, Queue
+from os import cpu_count
 from random import randint
 from time import sleep, time
 from typing import Any, NoReturn
 from typing import Dict, Text
 
 
-def worker(book: dict, author: Text, name: Text, q: Any, semaphore: Any = None, slp: float = 0) -> NoReturn:
-    # "Punishment Without Revenge": {"Author": "Lope de Vega", "Publisher": "Oberon books", "Year": 1631, "Total pages": 96}
-    if author in book["Author"]:
+def worker(book: dict, author: Text, name: Text, q: Any, semaphore: Any = None,
+           slp: float = 0) -> NoReturn:
+    if author == book["Author"]:
         q.put([True, name, author])
     else:
         q.put([False])
-    # print(sem)
     sleep(slp)
     if semaphore is not None:
         semaphore.release()
@@ -23,12 +23,25 @@ def generateBook(books: Dict) -> Dict:
     baseBookName = "Book"
     baseBookIdx = 1
     if books.get(baseBookName + str(baseBookIdx)) is None:
-        #     "Nineteen Eighty-Four": {"Author": "George Orwell", "Publisher":  "Secker & Warburg", "Year": 1949, "Total pages": 328}
-        books[f"{baseBookName}{baseBookIdx}"] = {"Author": f"Author{randint(1, 99)}", "Publisher": f"Publisher{randint(1, 99)}", "Year": randint(2000, 2022),
-                                                 "Total pages": randint(10, 250)}
+        books[f"{baseBookName}{baseBookIdx}"] = {
+            "Author": f"Author{randint(1, 99)}",
+            "Publisher": f"Publisher{randint(1, 99)}",
+            "Year": randint(2000, 2022),
+            "Total pages": randint(10, 250)}
     else:
-        books[f"{baseBookName}{randint(2, 1000)}"] = {"Author": f"Author{randint(1, 99)}", "Publisher": f"Publisher{randint(1, 99)}", "Year": randint(2000, 2022),
-                                                      "Total pages": randint(10, 250)}
+        randBookIdx = randint(2, 1000)
+        if books.get(f"{baseBookName}{randBookIdx}") is None:
+            books[f"{baseBookName}{randBookIdx}"] = {
+                "Author": f"Author{randint(1, 99)}",
+                "Publisher": f"Publisher{randint(1, 99)}",
+                "Year": randint(2000, 2022),
+                "Total pages": randint(10, 250)}
+        elif books.get(f"{baseBookName}{randBookIdx}") is not None:
+            books[f"{baseBookName}{randint(2, 1000)}"] = {
+                "Author": f"Author{randint(1, 99)}",
+                "Publisher": f"Publisher{randint(1, 99)}",
+                "Year": randint(2000, 2022),
+                "Total pages": randint(10, 250)}
     return books
 
 
@@ -49,27 +62,27 @@ if __name__ == '__main__':
             dataset["Books"] = generateBook(dataset["Books"])
 
     if ParallelThread == 0:
-        ParallelThread = os.cpu_count()
+        ParallelThread = cpu_count()
 
     # Pause ms -> seconds
-    PauseProcess: float = round(dataset["PT"] / 1000, 2)
+    PauseProcess: float = round(dataset["PT"] / 1000, 3)
 
-    qauthors: object = multiprocessing.Queue(MaxItemInStructure)
-    sem = multiprocessing.BoundedSemaphore(ParallelThread)
+    qauthors = Queue(MaxItemInStructure)
+    sem = BoundedSemaphore(ParallelThread)
 
+    print("=" * 10)
     pList = []
     ST_PARALLEL: float = round(time(), 1)
     for i in dataset["Books"]:
-        # sleep(PauseProcess)
         BookInfo = dataset["Books"][i]
         BookName = i
         BookAuthor = dataset["Books"][i]["Author"]
 
         sem.acquire()
-        p = multiprocessing.Process(target=worker, args=(BookInfo, KeywriteAuthor, BookName, qauthors, sem, PauseProcess))
+        p = Process(target=worker,
+                    args=(BookInfo, KeywriteAuthor, BookName, qauthors, sem, PauseProcess))
         p.start()
         pList.append(p)
-        # sleep(PauseProcess)
 
     for j in pList:
         j.join()
@@ -78,18 +91,20 @@ if __name__ == '__main__':
     ET_PARALLEL: float = round(time() - ST_PARALLEL, 1)
     Result["TP"] = ET_PARALLEL
 
-    print(f"Time of execution parallel - {ET_PARALLEL} (s)")
-
+    pResult = dict()
     while qauthors.qsize() > 0:
         resp = qauthors.get()
         if resp[0] is True:
-            if Result.get(resp[2]) is None:
-                Result[resp[2]] = [resp[1]]
+            if pResult.get(resp[2]) is None:
+                pResult[resp[2]] = [resp[1]]
             else:
-                Result[resp[2]].append(resp[1])
+                pResult[resp[2]].append(resp[1])
 
-    if len(Result) == 1:
-        Result[0] = "Author not found in the input dataset!"
+    if Result.get("ResultParallel") is None:
+        Result["ResultParallel"] = deepcopy(pResult)
+        pResult.clear()
+
+    print(f"Time of execution parallel - {ET_PARALLEL} (s)")
 
     ST: float = round(time(), 1)
     for k in dataset["Books"]:
@@ -97,14 +112,29 @@ if __name__ == '__main__':
         BookInfo = dataset["Books"][k]
         BookName = k
         BookAuthor = dataset["Books"][k]["Author"]
-        worker(BookInfo, KeywriteAuthor, BookName, qauthors, slp=PauseProcess)
+        sem.acquire()
+        worker(BookInfo, KeywriteAuthor, BookName, qauthors, sem, PauseProcess)
     ET: float = round(time() - ST, 1)
     Result["T1"] = ET
     print(f"Time of execution successively - {ET} (s)")
+    print("=" * 10)
+
+    while qauthors.qsize() > 0:
+        resp = qauthors.get()
+        if resp[0] is True:
+            if pResult.get(resp[2]) is None:
+                pResult[resp[2]] = [resp[1]]
+            else:
+                pResult[resp[2]].append(resp[1])
+
+    if Result.get("ResultSignle") is None:
+        Result["ResultSignle"] = deepcopy(pResult)
+        pResult.clear()
 
     with open("output/output_semaphore.json", "w", encoding="utf8") as wr:
         json.dump(Result, wr, indent=1, ensure_ascii=False)
-        print(Result)
+        print("Result -> ", Result)
         if dataset["N"] != NonGeneratedBooks:
-            with open("output/output_semaphore_generatedBooks.json", "w", encoding="utf8") as genstream:
+            with open("output/output_semaphore_generatedBooks.json", "w",
+                      encoding="utf8") as genstream:
                 json.dump(dataset["Books"], genstream, indent=1)

@@ -1,34 +1,46 @@
-import copy
 import json
-import multiprocessing
-import os
+from copy import copy, deepcopy
+from multiprocessing import Pool, Manager
+from os import cpu_count
 from random import randint
 from time import sleep, time
-from typing import Dict, List, Text, NoReturn
+from typing import Any, NoReturn, Dict, Text, List
 
 
-def worker(book: dict, author: Text, name: Text, slp: float = 0, q=None) -> NoReturn:
-    # "Punishment Without Revenge": {"Author": "Lope de Vega", "Publisher": "Oberon Books", "Year": 1631, "Total pages": 96}
-    # print(name)
-    if author in book["Author"]:
-        loc_list = [True, name, author]
+def worker(book: dict, author: Text, name: Text, q: Any, semaphore: Any = None,
+           slp: float = 0) -> NoReturn:
+    if author == book["Author"]:
+        q.put([True, name, author])
     else:
-        loc_list = [False]
-    if q is not None:
-        q.put(loc_list)
+        q.put([False])
     sleep(slp)
+    if semaphore is not None:
+        semaphore.put(1)
 
 
 def generateBook(books: Dict) -> Dict:
     baseBookName = "Book"
     baseBookIdx = 1
     if books.get(baseBookName + str(baseBookIdx)) is None:
-        #     "Nineteen Eighty-Four": {"Author": "George Orwell", "Publisher":  "Secker & Warburg", "Year": 1949, "Total pages": 328}
-        books[f"{baseBookName}{baseBookIdx}"] = {"Author": f"Author{randint(1, 99)}", "Publisher": f"Publisher{randint(1, 99)}", "Year": randint(2000, 2022),
-                                                 "Total pages": randint(10, 250)}
+        books[f"{baseBookName}{baseBookIdx}"] = {
+            "Author": f"Author{randint(1, 99)}",
+            "Publisher": f"Publisher{randint(1, 99)}",
+            "Year": randint(2000, 2022),
+            "Total pages": randint(10, 250)}
     else:
-        books[f"{baseBookName}{randint(2, 1000)}"] = {"Author": f"Author{randint(1, 99)}", "Publisher": f"Publisher{randint(1, 99)}", "Year": randint(2000, 2022),
-                                                      "Total pages": randint(10, 250)}
+        randBookIdx = randint(2, 1000)
+        if books.get(f"{baseBookName}{randBookIdx}") is None:
+            books[f"{baseBookName}{randBookIdx}"] = {
+                "Author": f"Author{randint(1, 99)}",
+                "Publisher": f"Publisher{randint(1, 99)}",
+                "Year": randint(2000, 2022),
+                "Total pages": randint(10, 250)}
+        elif books.get(f"{baseBookName}{randBookIdx}") is not None:
+            books[f"{baseBookName}{randint(2, 1000)}"] = {
+                "Author": f"Author{randint(1, 99)}",
+                "Publisher": f"Publisher{randint(1, 99)}",
+                "Year": randint(2000, 2022),
+                "Total pages": randint(10, 250)}
     return books
 
 
@@ -47,77 +59,185 @@ if __name__ == '__main__':
         generateNumber = dataset["N"] - len(dataset["Books"])
         for i in range(0, generateNumber):
             dataset["Books"] = generateBook(dataset["Books"])
-        print(dataset["Books"])
+
     if ParallelThread == 0:
-        ParallelThread = os.cpu_count()
+        ParallelThread = cpu_count()
 
     # Pause ms -> seconds
-    PauseProcess: float = round(dataset["PT"] / 1000, 2)
+    PauseProcess: float = round(dataset["PT"] / 1000, 3)
+    manager = Manager()
+    qauthors = manager.Queue(MaxItemInStructure)
 
-    qauthors: object = multiprocessing.Queue(MaxItemInStructure)
-    q_petri_token: object = multiprocessing.Queue(ParallelThread)
-
-    lp: List = []
+    pList = []
     ST_PARALLEL: float = round(time(), 1)
-    # qauthors.put(pool.starmap(worker, [(dataset["Books"][i], keywriteAuthor, i, PauseProcess) for i in dataset["Books"]]))
-    # pool.close()
-    # pool.join()
-    books_: Dict = copy.copy(dataset["Books"])
-    stopper: bool = False
-    while True:
-        if q_petri_token.qsize() < ParallelThread and stopper is not True:
-            for b in books_.keys():
-                i = copy.copy(b)
-            if len(books_) > 0:
-                books_.pop(i)
-            else:
-                stopper = True
-            if stopper is not True:
-                p = multiprocessing.Process(target=worker, args=(dataset["Books"][i], keywriteAuthor, i, PauseProcess, qauthors,))
-                p.start()
-                lp.append(p)
-                q_petri_token.put("1")
-        elif (q_petri_token.qsize() > 0 or q_petri_token.qsize() == ParallelThread) or (q_petri_token.qsize() > 0 and stopper is True):
-            while q_petri_token.qsize() > 0:
-                q_petri_token.get()
-                for p in lp:
-                    p.join()
-                    p.close()
-                    lp.remove(p)
+    PetriBooks: Dict = copy(dataset["Books"])
 
-            if stopper is True or len(books_) == 0:
+    PetriQueue = manager.Queue(MaxItemInStructure)
+
+    # Количество позиций и переходов
+    P = 4
+    T = 3
+    # Входное множество I
+    I: List[List[int]] = [
+        [ParallelThread, ParallelThread, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]]
+    # Выходное множество O
+    O: List[List[int]] = [
+        [0, 0, ParallelThread, 0],
+        [0, 0, 0, 1],
+        [1, 0, 0, 0]]
+    # Стартовое состояние
+    U = [ParallelThread, MaxItemInStructure, 0, 0]
+    # example U = [4, 5, 0, 0]
+
+    print("=" * 10)
+    print(f"Starting set (U) is equal [p1, p2, p3, p4] - {U}")
+    print("_" * 5)
+
+    sp = 0
+    for i in I:
+        sp += len(i)
+    msg = "The work of the thread is over. Transition T3"
+    msg_count = 0
+
+    if sp / len(I) == P and len(I) == T:
+        i = None
+        with Pool(ParallelThread) as p:
+            while True:
+                if U[0] > 0 and U[1] > 0:
+                    if I[0][0] >= 1 and I[0][1] >= 1:
+                        for j in range(U[0]):
+                            if len(PetriBooks) > 0:
+                                for b in PetriBooks:
+                                    i = b
+                                PetriBooks.pop(i)
+                                U[0] -= 1
+                                U[1] -= 1
+                                U[2] += 1
+                                BookInfo = dataset["Books"][i]
+                                BookName = i
+                                BookAuthor = dataset["Books"][i]["Author"]
+
+                                p.apply_async(func=worker, args=(
+                                    BookInfo, keywriteAuthor, BookName, qauthors, PetriQueue,
+                                    PauseProcess,))
+
+                if PetriQueue.qsize() > 0:
+                    token = PetriQueue.get()
+
+                    if int(token) == I[1][2]:
+                        if I[1][2] == O[1][3]:
+                            U[0] += token
+                    if int(token) == I[2][3]:
+                        if U[2] > 0:
+                            if I[2][3] == O[1][3]:
+                                U[3] += I[2][3]
+                                U[2] -= 1
+                        if msg_count == 0:
+                            print(msg)
+                            msg_count += 1
+                        else:
+                            msg_count += 1
+                if len(PetriBooks) == 0 and PetriQueue.qsize() == 0:
+                    p.close()
+                    p.join()
+                    break
+
+    # Check that the queue is empty. Move tokens from p3 to p4
+    while True:
+        if PetriQueue.qsize() > 0:
+            token = PetriQueue.get()
+
+            if int(token) == I[1][2]:
+                if I[1][2] == O[1][3]:
+                    U[0] += token
+            if int(token) == I[2][3]:
+                if U[2] > 0:
+                    if I[2][3] == O[1][3]:
+                        U[3] += I[2][3]
+                        U[2] -= 1
+                if msg_count == 0:
+                    print(msg)
+                    msg_count += 1
+                else:
+                    msg_count += 1
+        else:
+            if U[0] > 0:
+                U[0] -= 1
+            else:
                 break
+
+    print(msg, f"x {msg_count - 1}")
 
     ET_PARALLEL: float = round(time() - ST_PARALLEL, 1)
     Result["TP"] = ET_PARALLEL
-    print(f"Time of execution parallel - {ET_PARALLEL} (s)")
 
+    pResult = dict()
     while qauthors.qsize() > 0:
-        if qauthors.qsize() > 0:
-            resp = qauthors.get()
+        resp = qauthors.get()
         if resp[0] is True:
-            if Result.get(resp[2]) is None:
-                Result[resp[2]] = [resp[1]]
+            if pResult.get(resp[2]) is None:
+                pResult[resp[2]] = [resp[1]]
             else:
-                Result[resp[2]].append(resp[1])
+                pResult[resp[2]].append(resp[1])
 
-    if len(Result) == 1:
-        Result[0] = "Author not found in the input dataset!"
+    if Result.get("ResultParallel") is None:
+        Result["ResultParallel"] = deepcopy(pResult)
+        pResult.clear()
+
+    print("_" * 5)
+    print(f"Time of execution parallel - {ET_PARALLEL} (s)")
+    print(f"The set U is equal now [p1, p2, p3, p4] - {U}\n")
+
+    U = [ParallelThread, MaxItemInStructure, 0, 0]
+    print(f"Starting set (U) is equal [p1, p2, p3, p4] - {U}")
 
     ST: float = round(time(), 1)
     for k in dataset["Books"]:
-        sleep(PauseProcess)
-        book = dataset["Books"][k]
-        book_name = k
-        book_author = dataset["Books"][k]["Author"]
-        worker(book, keywriteAuthor, book_name, slp=PauseProcess)
+        if U[0] > 0 and U[1] > 0:
+            if I[0][0] >= 1 and I[0][1] >= 1:
+                U[0] -= 1
+                U[1] -= 1
+                U[2] += 1
+                sleep(PauseProcess)
+                BookInfo = dataset["Books"][k]
+                BookName = k
+                BookAuthor = dataset["Books"][k]["Author"]
+                worker(BookInfo, keywriteAuthor, BookName, qauthors, PetriQueue, PauseProcess)
+                if PetriQueue.qsize() > 0:
+                    U[2] -= I[1][2]
+                    U[3] += O[1][3]
+                    U[0] += PetriQueue.get()
+
+    while True:
+        if U[0] > 0:
+            U[0] -= 1
+        else:
+            break
+
     ET: float = round(time() - ST, 1)
     Result["T1"] = ET
     print(f"Time of execution successively - {ET} (s)")
+    print(f"The set U is equal now [p1, p2, p3, p4] - {U}\n")
+    print("=" * 10)
+
+    while qauthors.qsize() > 0:
+        resp = qauthors.get()
+        if resp[0] is True:
+            if pResult.get(resp[2]) is None:
+                pResult[resp[2]] = [resp[1]]
+            else:
+                pResult[resp[2]].append(resp[1])
+
+    if Result.get("ResultSignle") is None:
+        Result["ResultSignle"] = deepcopy(pResult)
+        pResult.clear()
 
     with open("output/output_poolPetri.json", "w", encoding="utf8") as wr:
         json.dump(Result, wr, indent=1, ensure_ascii=False)
-        print(Result)
+        print("Result -> ", Result)
         if dataset["N"] != NonGeneratedBooks:
-            with open("output/output_poolPetri_generatedBooks.json", "w", encoding="utf8") as genstream:
+            with open("output/output_poolPetri_generatedBooks.json", "w",
+                      encoding="utf8") as genstream:
                 json.dump(dataset["Books"], genstream, indent=1)
