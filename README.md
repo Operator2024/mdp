@@ -55,7 +55,7 @@ See the [LICENSE](LICENSE) file for license rights and limitations (MIT).
 P2** обозначая тем самым +1 готовый к работе поток. Если в переходе **P1**
 ещё остались книги, то процесс повторится.
 
-![Petri network semaphorePetri.py](src/semaphorePetri.gif)
+![Petri network semaphorePetri.py](src/semaphorePetri.png)
 
 ## Description of the petri net implemented in [poolPetri.py](poolPetri.py)
 
