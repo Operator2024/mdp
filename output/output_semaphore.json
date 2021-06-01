@@ -1,8 +1,16 @@
 {
-  "TP": 40.5,
-  "Lope de Vega": [
-    "Punishment Without Revenge",
-    "The Dog In The Manger"
-  ],
-  "T1": 102.5
+  "TP": 3.4,
+  "ResultParallel": {
+    "Lope de Vega": [
+      "Punishment Without Revenge",
+      "The Dog In The Manger"
+    ]
+  },
+  "T1": 10.0,
+  "ResultSignle": {
+    "Lope de Vega": [
+      "Punishment Without Revenge",
+      "The Dog In The Manger"
+    ]
+  }
 }
